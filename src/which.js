@@ -13,12 +13,7 @@ var XP_DEFAULT_PATHEXT = '.com;.exe;.bat;.cmd;.vbs;.vbe;.js;.jse;.wsf;.wsh';
 // Cross-platform method for splitting environment PATH variables
 function splitPath(p) {
   if (!p) return [];
-
-  if (common.platform === 'win') {
-    return p.split(';');
-  } else {
-    return p.split(':');
-  }
+  return p.split(path.delimiter);
 }
 
 function checkPath(pathName) {
@@ -45,7 +40,17 @@ function _which(options, cmd) {
   var where = null;
 
   // No relative/absolute paths provided?
-  if (cmd.search(/\//) === -1) {
+  if (cmd.indexOf('/') === -1) {
+    // Assume that there are no extensions to append to queries (this is the
+    // case for unix)
+    var pathExtArray = [''];
+    if (common.platform === 'win') {
+      // In case the PATHEXT variable is somehow not set (e.g.
+      // child_process.spawn with an empty environment), use the XP default.
+      var pathExtEnv = process.env.PATHEXT || XP_DEFAULT_PATHEXT;
+      pathExtArray = splitPath(pathExtEnv.toUpperCase());
+    }
+
     // Search for command in PATH
     pathArray.forEach(function (dir) {
       if (where) return; // already found it
@@ -54,46 +59,35 @@ function _which(options, cmd) {
 
       if (common.platform === 'win') {
         attempt = attempt.toUpperCase();
+      }
 
-        // In case the PATHEXT variable is somehow not set (e.g.
-        // child_process.spawn with an empty environment), use the XP default.
-        var pathExtEnv = process.env.PATHEXT || XP_DEFAULT_PATHEXT;
-        var pathExtArray = splitPath(pathExtEnv.toUpperCase());
-        var i;
-
-        // If the extension is already in PATHEXT, just return that.
-        for (i = 0; i < pathExtArray.length; i++) {
-          var ext = pathExtArray[i];
-          if (attempt.slice(-ext.length) === ext && checkPath(attempt)) {
-            where = attempt;
-            return;
-          }
-        }
-
-        // Cycle through the PATHEXT variable
-        var baseAttempt = attempt;
-        for (i = 0; i < pathExtArray.length; i++) {
-          attempt = baseAttempt + pathExtArray[i];
-          if (checkPath(attempt)) {
-            where = attempt;
-            return;
-          }
-        }
-      } else {
-        // Assume it's Unix-like
-        if (checkPath(attempt)) {
+      // Cycle through the PATHEXT variable
+      pathExtArray.forEach(function (ext) {
+        // If the argument passed in already has an extension in PATHEXT, just
+        // return that
+        // TODO(nate): replace with .endsWith(ext) once we use v4+
+        if (ext && attempt.slice(-ext.length) === ext && checkPath(attempt)) {
           where = attempt;
           return;
         }
-      }
+
+        // Otherwise, see if it exists without the extension
+        var newAttempt = attempt + ext;
+        if (checkPath(newAttempt)) {
+          where = newAttempt;
+          return;
+        }
+      });
     });
   }
 
+  // No relative path was specified, so we return what we found from the search
+  if (where) return where;
+
+  // Otherwise, return the absolute path of the path specified
+  if (checkPath(cmd)) return path.resolve(cmd);
+
   // Command not found anywhere?
-  if (!checkPath(cmd) && !where) return null;
-
-  where = where || path.resolve(cmd);
-
-  return where;
+  return null;
 }
 module.exports = _which;
